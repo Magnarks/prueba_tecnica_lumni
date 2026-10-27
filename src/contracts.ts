@@ -57,3 +57,49 @@ export interface BookingView {
     coffeePeople: number
   }
 }
+
+export interface AuthenticatedUser {
+  id: number
+  email: string
+  role: 'customer' | 'admin'
+  customerId: number | null
+  fullName: string | null
+}
+
+export interface AuthSession {
+  accessToken: string
+  expiresAt: string
+  user: AuthenticatedUser
+}
+
+export type BookingStatus = BookingView['status']
+
+export interface AdminBookingSummary {
+  id: string
+  status: BookingStatus
+  roomId: number
+  roomName: string
+  customerName: string | null
+  customerEmail: string | null
+  date: string
+  startTime: string
+  endTime: string
+  total: number
+  createdAt: string
+}
+
+export interface AdminBookingDetail extends AdminBookingSummary {
+  company: string | null
+  cancellationReason: string | null
+  cancelledAt: string | null
+  projector: boolean
+  coffeePeople: number
+  lines: Array<{ concept: string; amount: number }>
+}
+
+export interface PaginatedAdminBookings {
+  items: AdminBookingSummary[]
+  total: number
+  page: number
+  pageSize: number
+}

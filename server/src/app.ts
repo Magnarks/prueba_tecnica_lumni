@@ -2,6 +2,18 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import type { Pool } from 'pg'
 import { z } from 'zod'
 import {
+  createLoginSession,
+  getSessionUser,
+  InvalidCredentialsError,
+  revokeLoginSession,
+} from './auth-service'
+import {
+  AdminBookingNotFoundError,
+  cancelAdminBooking,
+  getAdminBookingDetail,
+  listAdminBookings,
+} from './admin-booking-service'
+import {
   BookingConflictError,
   BookingNotEditableError,
   BookingNotFoundError,
@@ -41,6 +53,57 @@ const bookingServicesSchema = z.object({
 const bookingStepSchema = z.object({
   currentStep: z.number().int().min(1).max(2),
 }).strict()
+const loginSchema = z.object({
+  email: z.string().trim().email().max(254),
+  password: z.string().min(1).max(128),
+}).strict()
+const adminBookingFiltersSchema = z.object({
+  status: z.enum(['draft', 'confirmed', 'completed', 'cancelled']).optional(),
+  roomId: z.coerce.number().int().positive().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(10),
+}).strict()
+const cancelBookingSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+}).strict()
+
+function readSessionAccessToken(request: Request, response: Response): string | null {
+  const authorization = request.get('authorization')
+  const match = /^Bearer ([A-Za-z0-9_-]+)$/.exec(authorization ?? '')
+
+  if (!match) {
+    response.status(401).json({ error: 'Inicia sesión para continuar.' })
+    return null
+  }
+
+  return match[1]
+}
+
+function requireAdmin(pool: Pool) {
+  return async (request: Request, response: Response, next: NextFunction) => {
+    const accessToken = readSessionAccessToken(request, response)
+
+    if (!accessToken) {
+      return
+    }
+
+    try {
+      const user = await getSessionUser(pool, accessToken)
+
+      if (!user) {
+        return response.status(401).json({ error: 'La sesión expiró. Inicia sesión de nuevo.' })
+      }
+
+      if (user.role !== 'admin') {
+        return response.status(403).json({ error: 'Esta acción requiere permisos de administrador.' })
+      }
+
+      return next()
+    } catch (error) {
+      return next(error)
+    }
+  }
+}
 
 function readBookingAccessToken(request: Request, response: Response): string | null {
   const authorization = request.get('authorization')
@@ -70,6 +133,63 @@ export function createApp(pool: Pool) {
   const quoteRepository = new PostgresQuoteRepository(pool)
 
   app.use(express.json({ limit: '16kb' }))
+
+  app.post('/api/auth/login', async (request, response, next) => {
+    const credentials = loginSchema.safeParse(request.body)
+
+    if (!credentials.success) {
+      return response.status(400).json({
+        error: 'Ingresa un correo y una contraseña válidos.',
+        details: credentials.error.issues,
+      })
+    }
+
+    try {
+      const session = await createLoginSession(
+        pool,
+        credentials.data.email,
+        credentials.data.password,
+      )
+      return response.json(session)
+    } catch (error) {
+      return next(error)
+    }
+  })
+
+  app.get('/api/auth/session', async (request, response, next) => {
+    const accessToken = readSessionAccessToken(request, response)
+
+    if (!accessToken) {
+      return
+    }
+
+    try {
+      const user = await getSessionUser(pool, accessToken)
+
+      if (!user) {
+        return response.status(401).json({ error: 'La sesión expiró. Inicia sesión de nuevo.' })
+      }
+
+      return response.json({ user })
+    } catch (error) {
+      return next(error)
+    }
+  })
+
+  app.post('/api/auth/logout', async (request, response, next) => {
+    const accessToken = readSessionAccessToken(request, response)
+
+    if (!accessToken) {
+      return
+    }
+
+    try {
+      await revokeLoginSession(pool, accessToken)
+      return response.status(204).end()
+    } catch (error) {
+      return next(error)
+    }
+  })
 
   app.get('/api/rooms', async (_request, response, next) => {
     try {
@@ -265,6 +385,62 @@ export function createApp(pool: Pool) {
     }
   })
 
+  app.get('/api/admin/bookings', requireAdmin(pool), async (request, response, next) => {
+    const filters = adminBookingFiltersSchema.safeParse(request.query)
+
+    if (!filters.success) {
+      return response.status(400).json({
+        error: 'Los filtros de reservas no son válidos.',
+        details: filters.error.issues,
+      })
+    }
+
+    try {
+      const result = await listAdminBookings(pool, filters.data)
+      return response.json(result)
+    } catch (error) {
+      return next(error)
+    }
+  })
+
+  app.get('/api/admin/bookings/:bookingId', requireAdmin(pool), async (request, response, next) => {
+    const bookingId = readBookingId(request, response)
+
+    if (!bookingId) {
+      return
+    }
+
+    try {
+      const booking = await getAdminBookingDetail(pool, bookingId)
+      return response.json({ booking })
+    } catch (error) {
+      return next(error)
+    }
+  })
+
+  app.post('/api/admin/bookings/:bookingId/cancel', requireAdmin(pool), async (request, response, next) => {
+    const bookingId = readBookingId(request, response)
+    const body = cancelBookingSchema.safeParse(request.body)
+
+    if (!bookingId) {
+      return
+    }
+
+    if (!body.success) {
+      return response.status(400).json({
+        error: 'El motivo de cancelación es obligatorio (máximo 500 caracteres).',
+        details: body.error.issues,
+      })
+    }
+
+    try {
+      const booking = await cancelAdminBooking(pool, bookingId, body.data.reason)
+      return response.json({ booking })
+    } catch (error) {
+      return next(error)
+    }
+  })
+
   app.use((
     error: unknown,
     _request: Request,
@@ -279,6 +455,14 @@ export function createApp(pool: Pool) {
 
     if (error instanceof BookingNotFoundError) {
       return response.status(404).json({ error: error.message })
+    }
+
+    if (error instanceof AdminBookingNotFoundError) {
+      return response.status(404).json({ error: error.message })
+    }
+
+    if (error instanceof InvalidCredentialsError) {
+      return response.status(401).json({ error: error.message })
     }
 
     if (error instanceof RangeError) {

@@ -6,17 +6,30 @@ import {
   CalendarDays,
   CircleAlert,
   Clock3,
+  LogIn,
+  LogOut,
   LoaderCircle,
   MapPin,
   ReceiptText,
   RotateCcw,
+  ShieldCheck,
   Sparkles,
 } from 'lucide-react'
+import { AdminDashboard } from './AdminDashboard'
 import { BookingWizard } from './BookingWizard'
-import type { BookingDraftAccess, QuoteForm, QuoteResult, Room, RoomSize } from './contracts'
+import { LoginDialog } from './LoginDialog'
+import type {
+  AuthSession,
+  BookingDraftAccess,
+  QuoteForm,
+  QuoteResult,
+  Room,
+  RoomSize,
+} from './contracts'
 import './App.css'
 
 const savedDraftKey = 'lumni.bookingDraft.v1'
+const authSessionKey = 'lumni.authSession.v1'
 
 const roomSizeLabels: Record<RoomSize, string> = {
   small: 'Pequeña',
@@ -80,6 +93,26 @@ function readSavedDraftAccess(): BookingDraftAccess | null {
   return null
 }
 
+function readSavedAuthSession(): AuthSession | null {
+  try {
+    const saved = localStorage.getItem(authSessionKey)
+    const parsed: unknown = saved ? JSON.parse(saved) : null
+
+    if (
+      typeof parsed === 'object' && parsed !== null &&
+      'accessToken' in parsed && typeof parsed.accessToken === 'string' &&
+      'expiresAt' in parsed && typeof parsed.expiresAt === 'string' &&
+      'user' in parsed && typeof parsed.user === 'object' && parsed.user !== null
+    ) {
+      return parsed as AuthSession
+    }
+  } catch {
+    localStorage.removeItem(authSessionKey)
+  }
+
+  return null
+}
+
 function App() {
   const today = getTodayInBogota()
   const [rooms, setRooms] = useState<Room[]>([])
@@ -95,6 +128,9 @@ function App() {
   const [quote, setQuote] = useState<QuoteResult | null>(null)
   const [isQuoting, setIsQuoting] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
+  const [authSession, setAuthSession] = useState(readSavedAuthSession)
+  const [isLoginOpen, setIsLoginOpen] = useState(false)
+  const [isAdminViewOpen, setIsAdminViewOpen] = useState(false)
   const [savedDraftAccess, setSavedDraftAccess] = useState(readSavedDraftAccess)
   const [isBookingWizardOpen, setIsBookingWizardOpen] = useState(false)
   const [wizardInitialAccess, setWizardInitialAccess] = useState<BookingDraftAccess | null>(null)
@@ -108,6 +144,25 @@ function App() {
 
     setSavedDraftAccess(access)
   }, [])
+
+  function handleLogin(session: AuthSession): void {
+    localStorage.setItem(authSessionKey, JSON.stringify(session))
+    setAuthSession(session)
+    setIsLoginOpen(false)
+  }
+
+  async function handleLogout(): Promise<void> {
+    if (authSession) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authSession.accessToken}` },
+      }).catch(() => undefined)
+    }
+
+    localStorage.removeItem(authSessionKey)
+    setAuthSession(null)
+    setIsAdminViewOpen(false)
+  }
 
   function openBookingWizard(): void {
     setWizardInitialAccess(savedDraftAccess)
@@ -158,6 +213,52 @@ function App() {
 
     return () => controller.abort()
   }, [roomsReloadKey])
+
+  useEffect(() => {
+    const accessToken = authSession?.accessToken
+
+    if (!accessToken) {
+      return
+    }
+
+    const controller = new AbortController()
+
+    async function validateSession(): Promise<void> {
+      try {
+        const response = await fetch('/api/auth/session', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          signal: controller.signal,
+        })
+
+        if (response.status === 401 && !controller.signal.aborted) {
+          localStorage.removeItem(authSessionKey)
+          setAuthSession(null)
+          setIsAdminViewOpen(false)
+          return
+        }
+
+        if (response.ok && !controller.signal.aborted) {
+          const result = await response.json() as { user: AuthSession['user'] }
+          setAuthSession((current) => {
+            if (!current || current.accessToken !== accessToken) {
+              return current
+            }
+
+            return {
+              accessToken: current.accessToken,
+              expiresAt: current.expiresAt,
+              user: result.user,
+            }
+          })
+        }
+      } catch {
+        return
+      }
+    }
+
+    void validateSession()
+    return () => controller.abort()
+  }, [authSession?.accessToken])
 
   function updateForm<Field extends keyof QuoteForm>(
     field: Field,
@@ -235,10 +336,35 @@ function App() {
               <RotateCcw size={15} /> Retomar borrador
             </button>
           )}
+          {authSession?.user.role === 'admin' && (
+            <button
+              className="admin-nav-button"
+              type="button"
+              onClick={() => setIsAdminViewOpen(true)}
+            >
+              <ShieldCheck size={15} /> Administración
+            </button>
+          )}
+          {authSession ? (
+            <button className="logout-button" type="button" onClick={() => void handleLogout()}>
+              <LogOut size={15} /> Salir
+            </button>
+          ) : (
+            <button className="login-trigger" type="button" onClick={() => setIsLoginOpen(true)}>
+              <LogIn size={15} /> Iniciar sesión
+            </button>
+          )}
           <div className="location-label"><MapPin size={15} /> Bogotá, Colombia</div>
         </div>
       </header>
 
+      {isAdminViewOpen && authSession?.user.role === 'admin' ? (
+        <AdminDashboard
+          accessToken={authSession.accessToken}
+          user={authSession.user}
+          onBack={() => setIsAdminViewOpen(false)}
+        />
+      ) : (
       <main id="inicio" className="main-content">
         <div className="page-intro">
           <p className="eyebrow"><span /> RESERVAS <span className="eyebrow-divider">/</span> COTIZADOR</p>
@@ -463,6 +589,7 @@ function App() {
           <span>BOGOTÁ · COLOMBIA</span>
         </footer>
       </main>
+      )}
 
       {isBookingWizardOpen && (
         <BookingWizard
@@ -471,6 +598,13 @@ function App() {
           initialAccess={wizardInitialAccess}
           onDraftAccessChange={handleDraftAccessChange}
           onClose={() => setIsBookingWizardOpen(false)}
+        />
+      )}
+
+      {isLoginOpen && (
+        <LoginDialog
+          onLogin={handleLogin}
+          onClose={() => setIsLoginOpen(false)}
         />
       )}
     </div>

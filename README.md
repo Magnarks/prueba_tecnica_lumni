@@ -1,6 +1,6 @@
 # Prueba técnica Lumni: reservas de salas
 
-Aplicación para cotizar y reservar salas de coworking. La Parte 1.1 implementa el cotizador y la Parte 1.2 agrega borradores retomables, servicios y confirmación de reservas.
+Aplicación para cotizar y reservar salas de coworking. Las Partes 1.1, 1.2 y 1.3 cubren el cotizador, el wizard retomable y la administración autenticada.
 
 ## Requisitos
 
@@ -66,6 +66,19 @@ El wizard guarda cliente, sala/horario y servicios en un borrador de PostgreSQL.
 
 Decisión de precio para servicios, no especificada en la guía: el proyector cuesta `$50.000` COP y el café `$8.000` COP por persona.
 
+## Acceso y administración
+
+`npm run db:seed` crea estas cuentas locales de demostración:
+
+| Rol | Correo | Contraseña |
+| --- | --- | --- |
+| Cliente | `cliente@lumni.local` | `Cliente-demo-2026!` |
+| Administrador | `admin@lumni.local` | `Admin-demo-2026!` |
+
+Son credenciales públicas para desarrollo; no se deben reutilizar en producción. Las contraseñas se guardan con `scrypt`. El login entrega un token aleatorio de sesión con duración de 8 horas; PostgreSQL conserva su hash, y logout revoca la sesión.
+
+El usuario administrador puede consultar `/api/admin/bookings` con filtro por estado y sala, paginación (`pageSize` máximo 50), y abrir `/api/admin/bookings/:id` para el detalle. `POST /api/admin/bookings/:id/cancel` exige un motivo de 1 a 500 caracteres y registra motivo y fecha. El servidor valida el rol; un cliente autenticado recibe `403`.
+
 ## Reglas implementadas
 
 - Tarifas: sala pequeña `$40.000`, mediana `$70.000` y grande `$120.000` COP por hora. La tarifa usada se consulta desde PostgreSQL.
@@ -86,14 +99,14 @@ npm run lint
 npm run build
 ```
 
-Las pruebas unitarias cubren tarifas, descuentos, recargo de sábado, duración, horario, domingo, zona horaria, disponibilidad, sugerencias, transiciones de estado y totales de servicios.
+Las pruebas unitarias cubren tarifas, descuentos, recargo de sábado, duración, horario, domingo, zona horaria, disponibilidad, sugerencias, transiciones de estado, totales de servicios y hash de contraseñas.
 
 ## Decisiones y alcance pendiente
 
 Las reglas de precio y horario viven en funciones puras para probarse sin una base de datos. El servicio de cotización recibe un repositorio: en producción consulta PostgreSQL y en las pruebas usa un repositorio en memoria. Las fechas se reciben como fecha local de Bogotá y se convierten a `timestamptz` para comparar intervalos. Los borradores se autorizan con un token aleatorio; la confirmación usa una transacción y una restricción de base de datos para resolver carreras.
 
-El token protege un borrador individual, pero todavía no hay inicio de sesión con los dos usuarios sembrados ni panel de administración. Tampoco se incluyen pagos ni las integraciones de las Partes 2, 3 y 4. El avance restante se agregará en commits separados.
+El token de borrador y la sesión de usuario son credenciales distintas. La cuenta demo permite probar el flujo local, pero no sustituye secretos, políticas de contraseña ni configuración de sesiones de producción. No se incluyen pagos ni las integraciones de las Partes 2, 3 y 4.
 
 ## Uso de IA
 
-Se utilizó GitHub Copilot para apoyar el scaffold, el cotizador, el wizard y las pruebas. Se ajustó la propuesta inicial para que el cálculo use la tarifa consultada desde PostgreSQL, en lugar de duplicar el precio dentro del formulario. Se verificaron build, lint, pruebas unitarias y solicitudes reales al API con PostgreSQL; también se probaron la reanudación tras recargar, la confirmación repetida y dos confirmaciones simultáneas para el mismo horario. Los registros temporales se eliminaron.
+Se utilizó GitHub Copilot para apoyar el scaffold, el cotizador, el wizard, la administración y las pruebas. Se verificaron build, lint, pruebas unitarias y solicitudes reales al API con PostgreSQL, incluyendo permisos por rol, revocación de sesión, cancelación obligatoria, reanudación del wizard y confirmaciones simultáneas. Los registros temporales se eliminaron.
