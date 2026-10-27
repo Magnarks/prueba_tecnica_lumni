@@ -37,6 +37,7 @@ export interface BookingView {
   startTime: string
   endTime: string
   durationHours: number
+  attendeeCount: number | null
   base: number
   discount: number
   surcharge: number
@@ -47,6 +48,16 @@ export interface BookingView {
 export interface CreatedBookingDraft {
   booking: BookingView
   accessToken: string
+}
+
+export interface BookingDraftOptions {
+  accessToken?: string
+  services?: BookingServicesInput
+  customer?: BookingCustomerInput
+  attendeeCount?: number | null
+  currentStep?: number
+  beforeCreate?: (client: PoolClient) => Promise<void>
+  afterCreate?: (client: PoolClient, bookingId: string) => Promise<void>
 }
 
 export class BookingNotFoundError extends Error {
@@ -117,6 +128,7 @@ interface BookingRow {
   startTime: string
   endTime: string
   durationHours: number
+  attendeeCount: number | null
 }
 
 interface PriceLine {
@@ -172,6 +184,7 @@ async function findBookingRow(
             to_char(b.starts_at AT TIME ZONE 'America/Bogota', 'HH24:MI') AS "startTime",
             to_char(b.ends_at AT TIME ZONE 'America/Bogota', 'HH24:MI') AS "endTime",
             (EXTRACT(EPOCH FROM (b.ends_at - b.starts_at)) / 3600)::float8 AS "durationHours"
+            , b.attendee_count AS "attendeeCount"
      FROM bookings b
      JOIN rooms r ON r.id = b.room_id
     LEFT JOIN customers c ON c.id = b.customer_id
@@ -219,6 +232,7 @@ function toBookingView(row: BookingRow, lines: PriceLine[]): BookingView {
     startTime: row.startTime,
     endTime: row.endTime,
     durationHours: row.durationHours,
+    attendeeCount: row.attendeeCount,
     base: amountFor('base'),
     discount: Math.abs(amountFor('discount_duration')),
     surcharge: amountFor('saturday_surcharge'),
@@ -320,6 +334,7 @@ export async function createBookingDraft(
   pool: Pool,
   quoteRepository: QuoteRepository,
   input: QuoteRequest,
+  options: BookingDraftOptions = {},
 ): Promise<CreatedBookingDraft> {
   const quote = await createQuote(input, quoteRepository)
 
@@ -327,28 +342,78 @@ export async function createBookingDraft(
     throw new BookingUnavailableError(quote)
   }
 
-  const accessToken = randomBytes(32).toString('base64url')
+  const accessToken = options.accessToken ?? randomBytes(32).toString('base64url')
   const tokenHash = hashAccessToken(accessToken)
+  const services = options.services ?? { projector: false, coffeePeople: 0 }
+  const serviceTotal = (services.projector ? PROJECTOR_PRICE : 0)
+    + services.coffeePeople * COFFEE_PER_PERSON_PRICE
+  const total = quote.total + serviceTotal
+  const currentStep = options.currentStep ?? 1
   const bookingId = await withTransaction(pool, async (client) => {
+    await options.beforeCreate?.(client)
+    let customerId: number | null = null
+
+    if (options.customer) {
+      const customer = await client.query<{ id: number }>(
+        `INSERT INTO customers (email, full_name, company)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (email) DO UPDATE
+           SET full_name = EXCLUDED.full_name,
+               company = EXCLUDED.company
+         RETURNING id`,
+        [
+          options.customer.email,
+          options.customer.fullName,
+          options.customer.company ?? null,
+        ],
+      )
+      customerId = customer.rows[0].id
+    }
+
     const insert = await client.query<{ id: string }>(
       `INSERT INTO bookings (
-         customer_id, room_id, starts_at, ends_at, total, status,
-         draft_token_hash, current_step
+         customer_id, attendee_count, room_id, starts_at, ends_at, total, status,
+         draft_token_hash, current_step, projector, coffee_people
        )
        VALUES (
-         NULL, $1, $2::timestamptz, $3::timestamptz, $4, 'draft', $5, 1
+         $1, $2, $3, $4::timestamptz, $5::timestamptz, $6, 'draft', $7, $8, $9, $10
        )
        RETURNING id::text AS id`,
       [
+        customerId,
+        options.attendeeCount ?? null,
         quote.room.id,
         toColombiaTimestamp(quote.date, quote.startTime),
         toColombiaTimestamp(quote.date, quote.endTime),
-        quote.total,
+        total,
         tokenHash,
+        currentStep,
+        services.projector,
+        services.coffeePeople,
       ],
     )
     const id = insert.rows[0].id
     await insertPriceLines(client, id, quote)
+    const serviceLines = [
+      services.projector
+        ? { concept: 'service_projector', amount: PROJECTOR_PRICE }
+        : null,
+      services.coffeePeople > 0
+        ? {
+            concept: 'service_coffee',
+            amount: services.coffeePeople * COFFEE_PER_PERSON_PRICE,
+          }
+        : null,
+    ].filter((line): line is PriceLine => line !== null)
+
+    for (const line of serviceLines) {
+      await client.query(
+        'INSERT INTO booking_lines (booking_id, concept, amount) VALUES ($1, $2, $3)',
+        [id, line.concept, line.amount],
+      )
+    }
+
+    await options.afterCreate?.(client, id)
     return id
   })
 

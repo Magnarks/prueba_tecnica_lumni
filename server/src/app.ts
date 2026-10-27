@@ -19,6 +19,13 @@ import {
   listAdminEmails,
 } from './admin-email-service'
 import {
+  AssistantChatNotFoundError,
+  AssistantModelError,
+  createAssistantChat,
+  getAssistantChat,
+  sendAssistantMessage,
+} from './assistant-chat-service'
+import {
   BookingConflictError,
   BookingNotEditableError,
   BookingNotFoundError,
@@ -75,6 +82,9 @@ const adminEmailFiltersSchema = z.object({
 }).strict()
 const cancelBookingSchema = z.object({
   reason: z.string().trim().min(1).max(500),
+}).strict()
+const assistantMessageSchema = z.object({
+  message: z.string().trim().min(1).max(1_000),
 }).strict()
 
 function readSessionAccessToken(request: Request, response: Response): string | null {
@@ -136,6 +146,29 @@ function readBookingId(request: Request, response: Response): string | null {
   }
 
   return result.data
+}
+
+function readChatId(request: Request, response: Response): string | null {
+  const result = z.string().regex(/^[1-9]\d*$/).safeParse(request.params.chatId)
+
+  if (!result.success) {
+    response.status(400).json({ error: 'El identificador del chat no es válido.' })
+    return null
+  }
+
+  return result.data
+}
+
+function readChatAccessToken(request: Request, response: Response): string | null {
+  const authorization = request.get('authorization')
+  const match = /^Bearer ([A-Za-z0-9_-]+)$/.exec(authorization ?? '')
+
+  if (!match) {
+    response.status(401).json({ error: 'Se requiere el token de esta conversación.' })
+    return null
+  }
+
+  return match[1]
 }
 
 export function createApp(pool: Pool) {
@@ -233,6 +266,61 @@ export function createApp(pool: Pool) {
     try {
       const quote = await createQuote(parsedRequest.data, quoteRepository)
       return response.json(quote)
+    } catch (error) {
+      return next(error)
+    }
+  })
+
+  app.post('/api/assistant/chats', async (_request, response, next) => {
+    try {
+      const chat = await createAssistantChat(pool)
+      return response.status(201).json(chat)
+    } catch (error) {
+      return next(error)
+    }
+  })
+
+  app.get('/api/assistant/chats/:chatId', async (request, response, next) => {
+    const chatId = readChatId(request, response)
+    const accessToken = readChatAccessToken(request, response)
+
+    if (!chatId || !accessToken) {
+      return
+    }
+
+    try {
+      const chat = await getAssistantChat(pool, chatId, accessToken)
+      return response.json(chat)
+    } catch (error) {
+      return next(error)
+    }
+  })
+
+  app.post('/api/assistant/chats/:chatId/messages', async (request, response, next) => {
+    const chatId = readChatId(request, response)
+    const accessToken = readChatAccessToken(request, response)
+    const message = assistantMessageSchema.safeParse(request.body)
+
+    if (!chatId || !accessToken) {
+      return
+    }
+
+    if (!message.success) {
+      return response.status(400).json({
+        error: 'El mensaje debe tener entre 1 y 1.000 caracteres.',
+        details: message.error.issues,
+      })
+    }
+
+    try {
+      const result = await sendAssistantMessage(
+        pool,
+        quoteRepository,
+        chatId,
+        accessToken,
+        message.data.message,
+      )
+      return response.json(result)
     } catch (error) {
       return next(error)
     }
@@ -506,6 +594,14 @@ export function createApp(pool: Pool) {
 
     if (error instanceof AdminEmailNotFoundError) {
       return response.status(404).json({ error: error.message })
+    }
+
+    if (error instanceof AssistantChatNotFoundError) {
+      return response.status(404).json({ error: error.message })
+    }
+
+    if (error instanceof AssistantModelError) {
+      return response.status(502).json({ error: error.message })
     }
 
     if (error instanceof InvalidCredentialsError) {

@@ -130,3 +130,26 @@ export interface PaginatedAdminEmails {
   page: number
   pageSize: number
 }
+
+export interface AssistantChatAccess {
+  chatId: string
+  accessToken: string
+}
+
+export interface AssistantChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+}
+
+export interface AssistantChatView {
+  chatId: string
+  messages: AssistantChatMessage[]
+  draftBookingId: string | null
+  quote: QuoteResult | null
+}
+
+export interface AssistantTurnResult extends AssistantChatView {
+  message: string
+  suggestedStartTime: string | null
+}

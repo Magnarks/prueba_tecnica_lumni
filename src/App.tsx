@@ -10,16 +10,19 @@ import {
   LogOut,
   LoaderCircle,
   MapPin,
+  MessageCircle,
   ReceiptText,
   RotateCcw,
   ShieldCheck,
   Sparkles,
 } from 'lucide-react'
 import { AdminDashboard } from './AdminDashboard'
+import { AssistantChat } from './AssistantChat'
 import { BookingWizard } from './BookingWizard'
 import { LoginDialog } from './LoginDialog'
 import type {
   AuthSession,
+  AssistantChatAccess,
   BookingDraftAccess,
   QuoteForm,
   QuoteResult,
@@ -29,6 +32,7 @@ import type {
 import './App.css'
 
 const savedDraftKey = 'lumni.bookingDraft.v1'
+const savedAssistantChatKey = 'lumni.assistantChat.v1'
 const authSessionKey = 'lumni.authSession.v1'
 
 const roomSizeLabels: Record<RoomSize, string> = {
@@ -113,6 +117,25 @@ function readSavedAuthSession(): AuthSession | null {
   return null
 }
 
+function readSavedAssistantChatAccess(): AssistantChatAccess | null {
+  try {
+    const saved = localStorage.getItem(savedAssistantChatKey)
+    const parsed: unknown = saved ? JSON.parse(saved) : null
+
+    if (
+      typeof parsed === 'object' && parsed !== null &&
+      'chatId' in parsed && typeof parsed.chatId === 'string' &&
+      'accessToken' in parsed && typeof parsed.accessToken === 'string'
+    ) {
+      return { chatId: parsed.chatId, accessToken: parsed.accessToken }
+    }
+  } catch {
+    localStorage.removeItem(savedAssistantChatKey)
+  }
+
+  return null
+}
+
 function App() {
   const today = getTodayInBogota()
   const [rooms, setRooms] = useState<Room[]>([])
@@ -129,6 +152,8 @@ function App() {
   const [isQuoting, setIsQuoting] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
   const [authSession, setAuthSession] = useState(readSavedAuthSession)
+  const [assistantChatAccess, setAssistantChatAccess] = useState(readSavedAssistantChatAccess)
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false)
   const [isLoginOpen, setIsLoginOpen] = useState(false)
   const [isAdminViewOpen, setIsAdminViewOpen] = useState(false)
   const [savedDraftAccess, setSavedDraftAccess] = useState(readSavedDraftAccess)
@@ -144,6 +169,23 @@ function App() {
 
     setSavedDraftAccess(access)
   }, [])
+
+  const handleChatAccessChange = useCallback((access: AssistantChatAccess | null) => {
+    if (access) {
+      localStorage.setItem(savedAssistantChatKey, JSON.stringify(access))
+    } else {
+      localStorage.removeItem(savedAssistantChatKey)
+    }
+
+    setAssistantChatAccess(access)
+  }, [])
+
+  const handleOpenAssistantDraft = useCallback((access: BookingDraftAccess) => {
+    handleDraftAccessChange(access)
+    setWizardInitialAccess(access)
+    setIsAssistantOpen(false)
+    setIsBookingWizardOpen(true)
+  }, [handleDraftAccessChange])
 
   function handleLogin(session: AuthSession): void {
     localStorage.setItem(authSessionKey, JSON.stringify(session))
@@ -331,6 +373,13 @@ function App() {
           </span>
         </a>
         <div className="topbar-actions">
+          <button
+            className="assistant-trigger"
+            type="button"
+            onClick={() => setIsAssistantOpen(true)}
+          >
+            <MessageCircle size={15} /> Asistente
+          </button>
           {savedDraftAccess && (
             <button className="resume-draft-button" type="button" onClick={openBookingWizard}>
               <RotateCcw size={15} /> Retomar borrador
@@ -605,6 +654,16 @@ function App() {
         <LoginDialog
           onLogin={handleLogin}
           onClose={() => setIsLoginOpen(false)}
+        />
+      )}
+
+      {isAssistantOpen && (
+        <AssistantChat
+          initialAccess={assistantChatAccess}
+          onChatAccessChange={handleChatAccessChange}
+          onDraftCreated={handleDraftAccessChange}
+          onOpenDraft={handleOpenAssistantDraft}
+          onClose={() => setIsAssistantOpen(false)}
         />
       )}
     </div>
