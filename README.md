@@ -1,6 +1,6 @@
 # Prueba técnica Lumni: reservas de salas
 
-Aplicación para cotizar y reservar salas de coworking. Las Partes 1.1, 1.2 y 1.3 cubren el cotizador, el wizard retomable y la administración autenticada.
+Aplicación para cotizar y reservar salas de coworking. Las Partes 1.1, 1.2, 1.3 y 2.1 cubren el cotizador, el wizard retomable, la administración autenticada y el correo de confirmación en segundo plano.
 
 ## Requisitos
 
@@ -79,6 +79,14 @@ Son credenciales públicas para desarrollo; no se deben reutilizar en producció
 
 El usuario administrador puede consultar `/api/admin/bookings` con filtro por estado y sala, paginación (`pageSize` máximo 50), y abrir `/api/admin/bookings/:id` para el detalle. `POST /api/admin/bookings/:id/cancel` exige un motivo de 1 a 500 caracteres y registra motivo y fecha. El servidor valida el rol; un cliente autenticado recibe `403`.
 
+## Correo de confirmación (Parte 2.1)
+
+La primera transición de una reserva a `confirmed` inserta un job en `booking_email_jobs` dentro de la misma transacción. La API no espera al worker. Un índice único por reserva evita jobs duplicados y el claim usa `FOR UPDATE SKIP LOCKED` para que dos procesos no tomen el mismo job.
+
+El worker captura el correo en `captured_emails`, por lo que los envíos se pueden inspeccionar localmente sin proveedor externo. Si falla, reintenta con esperas de 1, 2, 4, 8 y 16 segundos: cinco reintentos después del envío inicial, seis intentos en total. Tras el sexto fallo queda `failed`; se guarda el último error. Los jobs `processing` con más de cinco minutos sin lock se recuperan al iniciar y periódicamente.
+
+En el panel de administración, la pestaña **Correos** permite filtrar por `pending`, `processing`, `sent` y `failed`, revisar intentos, error, contenido y fecha de captura. Las rutas `GET /api/admin/emails` y `GET /api/admin/emails/:id` requieren rol administrador.
+
 ## Reglas implementadas
 
 - Tarifas: sala pequeña `$40.000`, mediana `$70.000` y grande `$120.000` COP por hora. La tarifa usada se consulta desde PostgreSQL.
@@ -99,7 +107,7 @@ npm run lint
 npm run build
 ```
 
-Las pruebas unitarias cubren tarifas, descuentos, recargo de sábado, duración, horario, domingo, zona horaria, disponibilidad, sugerencias, transiciones de estado, totales de servicios y hash de contraseñas.
+Las pruebas unitarias cubren tarifas, descuentos, recargo de sábado, duración, horario, domingo, zona horaria, disponibilidad, sugerencias, transiciones de estado, totales de servicios, hash de contraseñas y backoff/límite de reintentos.
 
 ## Decisiones y alcance pendiente
 
@@ -109,4 +117,4 @@ El token de borrador y la sesión de usuario son credenciales distintas. La cuen
 
 ## Uso de IA
 
-Se utilizó GitHub Copilot para apoyar el scaffold, el cotizador, el wizard, la administración y las pruebas. Se verificaron build, lint, pruebas unitarias y solicitudes reales al API con PostgreSQL, incluyendo permisos por rol, revocación de sesión, cancelación obligatoria, reanudación del wizard y confirmaciones simultáneas. Los registros temporales se eliminaron.
+Se utilizó GitHub Copilot para apoyar el scaffold, el cotizador, el wizard, la administración, el worker de correo y las pruebas. Se verificaron build, lint, pruebas unitarias y flujos reales contra PostgreSQL, incluyendo permisos por rol, revocación de sesión, cancelación, confirmación idempotente, captura local y estado `failed` tras cinco reintentos. Los registros temporales se eliminaron.

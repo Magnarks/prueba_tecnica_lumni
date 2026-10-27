@@ -103,3 +103,30 @@ export interface PaginatedAdminBookings {
   page: number
   pageSize: number
 }
+
+export type BookingEmailStatus = 'pending' | 'processing' | 'sent' | 'failed'
+
+export interface AdminEmailSummary {
+  id: number
+  bookingId: string
+  recipient: string
+  subject: string
+  status: BookingEmailStatus
+  attempts: number
+  lastError: string | null
+  createdAt: string
+  nextAttemptAt: string | null
+  sentAt: string | null
+  capturedAt: string | null
+}
+
+export interface AdminEmailDetail extends AdminEmailSummary {
+  body: string
+}
+
+export interface PaginatedAdminEmails {
+  items: AdminEmailSummary[]
+  total: number
+  page: number
+  pageSize: number
+}

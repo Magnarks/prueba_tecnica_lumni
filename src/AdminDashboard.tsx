@@ -9,6 +9,7 @@ import {
   CircleAlert,
   Clock3,
   LoaderCircle,
+  Mail,
   RefreshCw,
   UserRound,
   X,
@@ -20,6 +21,7 @@ import type {
   PaginatedAdminBookings,
   Room,
 } from './contracts'
+import { AdminEmailJobs } from './AdminEmailJobs'
 import './Admin.css'
 
 interface AdminDashboardProps {
@@ -89,6 +91,7 @@ function displayCustomer(name: string | null, email: string | null): string {
 
 export function AdminDashboard({ accessToken, user, onBack }: AdminDashboardProps) {
   const [rooms, setRooms] = useState<Room[]>([])
+  const [activePanel, setActivePanel] = useState<'bookings' | 'emails'>('bookings')
   const [bookings, setBookings] = useState<PaginatedAdminBookings>({
     items: [],
     total: 0,
@@ -243,7 +246,7 @@ export function AdminDashboard({ accessToken, user, onBack }: AdminDashboardProp
       <header className="admin-page-header">
         <div>
           <p className="admin-eyebrow">LUMNI COWORKING / ADMINISTRACIÓN</p>
-          <h1>Reservas</h1>
+          <h1>{activePanel === 'bookings' ? 'Reservas' : 'Correos'}</h1>
         </div>
         <div className="admin-header-actions">
           <span className="admin-user"><UserRound size={15} /> {user.fullName ?? user.email}</span>
@@ -253,6 +256,29 @@ export function AdminDashboard({ accessToken, user, onBack }: AdminDashboardProp
         </div>
       </header>
 
+      <nav className="admin-section-tabs" aria-label="Secciones de administración">
+        <button
+          className={activePanel === 'bookings' ? 'admin-section-tab is-active' : 'admin-section-tab'}
+          type="button"
+          aria-current={activePanel === 'bookings' ? 'page' : undefined}
+          onClick={() => setActivePanel('bookings')}
+        >
+          <Building2 size={15} /> Reservas
+        </button>
+        <button
+          className={activePanel === 'emails' ? 'admin-section-tab is-active' : 'admin-section-tab'}
+          type="button"
+          aria-current={activePanel === 'emails' ? 'page' : undefined}
+          onClick={() => setActivePanel('emails')}
+        >
+          <Mail size={15} /> Correos
+        </button>
+      </nav>
+
+      {activePanel === 'emails' ? (
+        <AdminEmailJobs accessToken={accessToken} />
+      ) : (
+      <>
       <section className="admin-toolbar" aria-label="Filtros de reservas">
         <label className="admin-filter" htmlFor="admin-status-filter">
           <span>Estado</span>
@@ -475,6 +501,8 @@ export function AdminDashboard({ accessToken, user, onBack }: AdminDashboardProp
           </aside>
         )}
       </div>
+      </>
+      )}
     </main>
   )
 }

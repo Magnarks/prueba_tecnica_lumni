@@ -551,6 +551,26 @@ export async function confirmBooking(
         'UPDATE bookings SET status = $2 WHERE id = $1',
         [bookingId, nextStatus],
       )
+      await client.query(
+        `INSERT INTO booking_email_jobs (booking_id, recipient, subject, body)
+         SELECT b.id,
+                c.email,
+                'Confirmación de reserva Lumni #' || b.id::text,
+                'Hola ' || c.full_name || E',\n\n' ||
+                  'Tu reserva de sala quedó confirmada.' || E'\n' ||
+                  'Sala: ' || r.name || E'\n' ||
+                  'Fecha: ' || to_char(b.starts_at AT TIME ZONE 'America/Bogota', 'DD/MM/YYYY') || E'\n' ||
+                  'Horario: ' || to_char(b.starts_at AT TIME ZONE 'America/Bogota', 'HH24:MI') ||
+                  '–' || to_char(b.ends_at AT TIME ZONE 'America/Bogota', 'HH24:MI') || E'\n' ||
+                  'Total pactado: $' || replace(to_char(b.total, 'FM999,999,999,990'), ',', '.') || ' COP' || E'\n\n' ||
+                  'Gracias por reservar con Lumni Coworking.'
+         FROM bookings b
+         JOIN customers c ON c.id = b.customer_id
+         JOIN rooms r ON r.id = b.room_id
+         WHERE b.id = $1
+         ON CONFLICT (booking_id) DO NOTHING`,
+        [bookingId],
+      )
     }
   })
 

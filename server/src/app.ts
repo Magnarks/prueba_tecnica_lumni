@@ -14,6 +14,11 @@ import {
   listAdminBookings,
 } from './admin-booking-service'
 import {
+  AdminEmailNotFoundError,
+  getAdminEmailDetail,
+  listAdminEmails,
+} from './admin-email-service'
+import {
   BookingConflictError,
   BookingNotEditableError,
   BookingNotFoundError,
@@ -60,6 +65,11 @@ const loginSchema = z.object({
 const adminBookingFiltersSchema = z.object({
   status: z.enum(['draft', 'confirmed', 'completed', 'cancelled']).optional(),
   roomId: z.coerce.number().int().positive().optional(),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().min(1).max(50).default(10),
+}).strict()
+const adminEmailFiltersSchema = z.object({
+  status: z.enum(['pending', 'processing', 'sent', 'failed']).optional(),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().min(1).max(50).default(10),
 }).strict()
@@ -441,6 +451,39 @@ export function createApp(pool: Pool) {
     }
   })
 
+  app.get('/api/admin/emails', requireAdmin(pool), async (request, response, next) => {
+    const filters = adminEmailFiltersSchema.safeParse(request.query)
+
+    if (!filters.success) {
+      return response.status(400).json({
+        error: 'Los filtros de correo no son válidos.',
+        details: filters.error.issues,
+      })
+    }
+
+    try {
+      const result = await listAdminEmails(pool, filters.data)
+      return response.json(result)
+    } catch (error) {
+      return next(error)
+    }
+  })
+
+  app.get('/api/admin/emails/:emailJobId', requireAdmin(pool), async (request, response, next) => {
+    const emailJobId = z.coerce.number().int().positive().safeParse(request.params.emailJobId)
+
+    if (!emailJobId.success) {
+      return response.status(400).json({ error: 'El identificador del correo no es válido.' })
+    }
+
+    try {
+      const email = await getAdminEmailDetail(pool, emailJobId.data)
+      return response.json({ email })
+    } catch (error) {
+      return next(error)
+    }
+  })
+
   app.use((
     error: unknown,
     _request: Request,
@@ -458,6 +501,10 @@ export function createApp(pool: Pool) {
     }
 
     if (error instanceof AdminBookingNotFoundError) {
+      return response.status(404).json({ error: error.message })
+    }
+
+    if (error instanceof AdminEmailNotFoundError) {
       return response.status(404).json({ error: error.message })
     }
 
