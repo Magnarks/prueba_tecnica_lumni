@@ -1,6 +1,6 @@
 # Prueba técnica Lumni: reservas de salas
 
-Aplicación para cotizar salas de coworking. La primera entrega cubre la Parte 1.1: API de cotización, reglas de horario, consulta de disponibilidad y pantalla web.
+Aplicación para cotizar y reservar salas de coworking. La Parte 1.1 implementa el cotizador y la Parte 1.2 agrega borradores retomables, servicios y confirmación de reservas.
 
 ## Requisitos
 
@@ -52,6 +52,20 @@ Las credenciales de desarrollo están en `.env.example`; `.env` está excluido d
 
 La respuesta incluye la sala, el horario, el desglose (`base`, `discount`, `surcharge`, `total`), `available`, el motivo cuando no se puede reservar y `suggestedStartTime` cuando existe un horario posterior libre ese día.
 
+## Reserva por pasos
+
+El wizard guarda cliente, sala/horario y servicios en un borrador de PostgreSQL. El navegador conserva en `localStorage` el identificador del borrador y un token aleatorio de acceso para permitir retomarlo después de recargar o cerrar la página. El servidor guarda solo el hash SHA-256 del token. Las rutas privadas requieren `Authorization: Bearer <token>`.
+
+- `POST /api/bookings/drafts`: crea un borrador a partir de una cotización disponible y devuelve la reserva junto con el token, que solo se muestra al crearlo.
+- `GET /api/bookings/:id`: recupera el borrador asociado al token.
+- `PATCH /api/bookings/:id/customer`: guarda los datos del cliente.
+- `PATCH /api/bookings/:id/step`: persiste el avance permitido del wizard; no permite saltar al paso de servicios.
+- `PATCH /api/bookings/:id/schedule`: vuelve a consultar el cotizador y guarda la sala, el horario y el precio pactado.
+- `PATCH /api/bookings/:id/services`: guarda el proyector y la cantidad de cafés, y actualiza el desglose.
+- `POST /api/bookings/:id/confirm`: confirma desde el botón de la app; el chat u otros clientes nunca confirman por el usuario.
+
+Decisión de precio para servicios, no especificada en la guía: el proyector cuesta `$50.000` COP y el café `$8.000` COP por persona.
+
 ## Reglas implementadas
 
 - Tarifas: sala pequeña `$40.000`, mediana `$70.000` y grande `$120.000` COP por hora. La tarifa usada se consulta desde PostgreSQL.
@@ -59,7 +73,8 @@ La respuesta incluye la sala, el horario, el desglose (`base`, `discount`, `surc
 - Horario de lunes a sábado, de 07:00 a 21:00; el domingo está cerrado. Las fechas y horas se interpretan en la zona de Bogotá (`UTC-05:00`).
 - Descuento del 10 % desde 4 horas y del 20 % desde 8 horas. El sábado se suma el 25 % después del descuento.
 - Solo las reservas `confirmed` bloquean disponibilidad. Los intervalos son semiabiertos: una reserva que termina a las 10:00 no se cruza con otra que empieza a esa hora.
-- La migración incluye una restricción de exclusión GiST para impedir cruces entre reservas confirmadas de la misma sala, incluso ante confirmaciones simultáneas. El flujo de confirmación pertenece a la Parte 1.2 y aún no está implementado.
+- Una restricción de exclusión GiST impide cruces entre reservas confirmadas de la misma sala. La confirmación además bloquea la fila del borrador con `FOR UPDATE`; si otra transacción ganó el horario, PostgreSQL rechaza el cambio y el API responde `409`.
+- Repetir la confirmación de una reserva ya confirmada es idempotente: la transición no vuelve a modificar el estado y el total se lee del valor pactado, sin recalcularse.
 
 El cotizador no crea ni aparta reservas: una cotización disponible puede cambiar si otra persona confirma antes.
 
@@ -71,14 +86,14 @@ npm run lint
 npm run build
 ```
 
-Las pruebas unitarias cubren tarifas, descuentos, recargo de sábado, duración, horario, domingo, zona horaria, disponibilidad y sugerencia de horario.
+Las pruebas unitarias cubren tarifas, descuentos, recargo de sábado, duración, horario, domingo, zona horaria, disponibilidad, sugerencias, transiciones de estado y totales de servicios.
 
 ## Decisiones y alcance pendiente
 
-Las reglas de precio y horario viven en funciones puras para probarse sin una base de datos. El servicio de cotización recibe un repositorio: en producción consulta PostgreSQL y en las pruebas usa un repositorio en memoria. Las fechas se reciben como fecha local de Bogotá y se convierten a `timestamptz` para comparar intervalos.
+Las reglas de precio y horario viven en funciones puras para probarse sin una base de datos. El servicio de cotización recibe un repositorio: en producción consulta PostgreSQL y en las pruebas usa un repositorio en memoria. Las fechas se reciben como fecha local de Bogotá y se convierten a `timestamptz` para comparar intervalos. Los borradores se autorizan con un token aleatorio; la confirmación usa una transacción y una restricción de base de datos para resolver carreras.
 
-Esta entrega todavía no incluye borradores de reserva, autenticación, pagos, panel de administración, servicios adicionales ni las integraciones de las Partes 2, 3 y 4. Se agregarán sobre este mismo proyecto en commits separados.
+El token protege un borrador individual, pero todavía no hay inicio de sesión con los dos usuarios sembrados ni panel de administración. Tampoco se incluyen pagos ni las integraciones de las Partes 2, 3 y 4. El avance restante se agregará en commits separados.
 
 ## Uso de IA
 
-Se utilizó GitHub Copilot para apoyar el scaffold, la implementación de la pantalla/API y las pruebas. Se ajustó la propuesta inicial para que el cálculo use la tarifa consultada desde PostgreSQL, en lugar de duplicar el precio dentro del formulario. Se verificaron build, lint, las pruebas unitarias y solicitudes reales al API con PostgreSQL; también se probó una franja ocupada y se eliminó el registro temporal de prueba.
+Se utilizó GitHub Copilot para apoyar el scaffold, el cotizador, el wizard y las pruebas. Se ajustó la propuesta inicial para que el cálculo use la tarifa consultada desde PostgreSQL, en lugar de duplicar el precio dentro del formulario. Se verificaron build, lint, pruebas unitarias y solicitudes reales al API con PostgreSQL; también se probaron la reanudación tras recargar, la confirmación repetida y dos confirmaciones simultáneas para el mismo horario. Los registros temporales se eliminaron.

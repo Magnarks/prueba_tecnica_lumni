@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
   ArrowRight,
   Building2,
@@ -12,38 +12,11 @@ import {
   RotateCcw,
   Sparkles,
 } from 'lucide-react'
+import { BookingWizard } from './BookingWizard'
+import type { BookingDraftAccess, QuoteForm, QuoteResult, Room, RoomSize } from './contracts'
 import './App.css'
 
-type RoomSize = 'small' | 'medium' | 'large'
-
-interface Room {
-  id: number
-  name: string
-  size: RoomSize
-  hourlyRate: number
-}
-
-interface QuoteForm {
-  roomId: string
-  date: string
-  startTime: string
-  durationHours: number
-}
-
-interface QuoteResult {
-  room: Room
-  date: string
-  startTime: string
-  endTime: string
-  durationHours: number
-  base: number
-  discount: number
-  surcharge: number
-  total: number
-  available: boolean
-  reason: string | null
-  suggestedStartTime: string | null
-}
+const savedDraftKey = 'lumni.bookingDraft.v1'
 
 const roomSizeLabels: Record<RoomSize, string> = {
   small: 'Pequeña',
@@ -88,6 +61,25 @@ function formatBookingDate(date: string): string {
   }).format(new Date(`${date}T12:00:00-05:00`))
 }
 
+function readSavedDraftAccess(): BookingDraftAccess | null {
+  try {
+    const saved = localStorage.getItem(savedDraftKey)
+    const parsed: unknown = saved ? JSON.parse(saved) : null
+
+    if (
+      typeof parsed === 'object' && parsed !== null &&
+      'bookingId' in parsed && typeof parsed.bookingId === 'string' &&
+      'accessToken' in parsed && typeof parsed.accessToken === 'string'
+    ) {
+      return { bookingId: parsed.bookingId, accessToken: parsed.accessToken }
+    }
+  } catch {
+    localStorage.removeItem(savedDraftKey)
+  }
+
+  return null
+}
+
 function App() {
   const today = getTodayInBogota()
   const [rooms, setRooms] = useState<Room[]>([])
@@ -103,6 +95,24 @@ function App() {
   const [quote, setQuote] = useState<QuoteResult | null>(null)
   const [isQuoting, setIsQuoting] = useState(false)
   const [quoteError, setQuoteError] = useState<string | null>(null)
+  const [savedDraftAccess, setSavedDraftAccess] = useState(readSavedDraftAccess)
+  const [isBookingWizardOpen, setIsBookingWizardOpen] = useState(false)
+  const [wizardInitialAccess, setWizardInitialAccess] = useState<BookingDraftAccess | null>(null)
+
+  const handleDraftAccessChange = useCallback((access: BookingDraftAccess | null) => {
+    if (access) {
+      localStorage.setItem(savedDraftKey, JSON.stringify(access))
+    } else {
+      localStorage.removeItem(savedDraftKey)
+    }
+
+    setSavedDraftAccess(access)
+  }, [])
+
+  function openBookingWizard(): void {
+    setWizardInitialAccess(savedDraftAccess)
+    setIsBookingWizardOpen(true)
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -219,7 +229,14 @@ function App() {
             <span className="brand-subtitle">coworking</span>
           </span>
         </a>
-        <div className="location-label"><MapPin size={15} /> Bogotá, Colombia</div>
+        <div className="topbar-actions">
+          {savedDraftAccess && (
+            <button className="resume-draft-button" type="button" onClick={openBookingWizard}>
+              <RotateCcw size={15} /> Retomar borrador
+            </button>
+          )}
+          <div className="location-label"><MapPin size={15} /> Bogotá, Colombia</div>
+        </div>
       </header>
 
       <main id="inicio" className="main-content">
@@ -410,6 +427,17 @@ function App() {
                   </div>
                 </div>
 
+                {quote.available && (
+                  <button
+                    className="start-booking-button"
+                    type="button"
+                    onClick={openBookingWizard}
+                  >
+                    <span>{savedDraftAccess ? 'Retomar borrador' : 'Iniciar reserva'}</span>
+                    <ArrowRight size={17} aria-hidden="true" />
+                  </button>
+                )}
+
                 {!quote.available && quote.reason && (
                   <div className="availability-message">
                     <CircleAlert size={17} aria-hidden="true" />
@@ -435,6 +463,16 @@ function App() {
           <span>BOGOTÁ · COLOMBIA</span>
         </footer>
       </main>
+
+      {isBookingWizardOpen && (
+        <BookingWizard
+          quote={quote}
+          rooms={rooms}
+          initialAccess={wizardInitialAccess}
+          onDraftAccessChange={handleDraftAccessChange}
+          onClose={() => setIsBookingWizardOpen(false)}
+        />
+      )}
     </div>
   )
 }
