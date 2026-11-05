@@ -108,7 +108,7 @@ El modelo nunca calcula precio ni disponibilidad: cuando los datos obligatorios 
 
 `POST /api/assistant/chats` crea una conversación y devuelve su token aleatorio. `GET /api/assistant/chats/:id` y `POST /api/assistant/chats/:id/messages` requieren `Authorization: Bearer <token>`. PostgreSQL guarda únicamente el hash del token y expira el chat después de 30 días. El navegador guarda el token para reanudarlo; no se envían al modelo mensajes de otros clientes, credenciales ni datos de reservas existentes.
 
-La respuesta del modelo se valida con Zod en modo estricto y el prompt no tiene herramientas ni acceso a datos de otros clientes. El extractor solo aporta fragmentos que deben aparecer literalmente en el mensaje actual; el servidor resuelve fechas en español y no usa una hora sugerida hasta recibir un “sí” explícito. Cuando falta un dato, el asistente pregunta. Precio y disponibilidad siempre vienen de `POST /api/quotes`; al completar lo explícito crea un borrador, pero solo el wizard puede confirmarlo.
+La respuesta del modelo se valida con Zod en modo estricto y el prompt no tiene herramientas ni acceso a datos de otros clientes. El extractor solo aporta fragmentos que deben aparecer en el mensaje actual (normalizando mayúsculas y acentos); el servidor resuelve fechas en español y no usa una hora sugerida hasta recibir un “sí” explícito. Cuando falta un dato, el asistente pregunta. Precio y disponibilidad siempre vienen de `POST /api/quotes`; al completar lo explícito crea un borrador, pero solo el wizard puede confirmarlo.
 
 Para probar la configuración actual del equipo, `AI_MODEL` en el `.env` local está ajustado al identificador publicado por tu servidor llama.cpp. En otra máquina, reemplázalo por un `id` de `GET /v1/models`. En el repositorio, `.env.example` usa `local-model` como placeholder portable.
 
@@ -130,9 +130,10 @@ El cotizador no crea ni aparta reservas: una cotización disponible puede cambia
 npm test
 npm run lint
 npm run build
+npm run docs:pdf
 ```
 
-Las pruebas unitarias cubren tarifas, descuentos, recargo de sábado, duración, horario, domingo, zona horaria, disponibilidad, extracción validada, fechas relativas, sugerencias aceptadas explícitamente, transiciones de estado, totales de servicios, hash de contraseñas y backoff/límite de reintentos.
+`npm run docs:pdf` genera `docs/guia-estudio.pdf` a partir de `docs/guia-estudio.md`. Las pruebas unitarias cubren tarifas, descuentos, recargo de sábado, duración, horario, domingo, zona horaria, disponibilidad, extracción validada, fechas relativas, sugerencias aceptadas explícitamente, transiciones de estado, totales de servicios, hash de contraseñas y backoff/límite de reintentos.
 
 ## Decisiones y alcance pendiente
 
